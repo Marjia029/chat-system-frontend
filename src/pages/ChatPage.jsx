@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { authAPI } from '../api/auth';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { useAuth } from '../hooks/useAuth';
 import Layout from '../components/layout/Layout';
 import ConversationList from '../components/chat/ConversationList';
 import ChatWindow from '../components/chat/ChatWindow';
@@ -8,16 +10,40 @@ import { Users, MessageSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const ChatPage = () => {
+  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedUser, setSelectedUser] = useState(null);
   const [allUsers, setAllUsers] = useState([]);
   const [showUsersList, setShowUsersList] = useState(false);
   const [showChatOnMobile, setShowChatOnMobile] = useState(false);
   const [conversationRefreshTrigger, setConversationRefreshTrigger] = useState(0);
   
-  const { messages } = useWebSocket();
+  const { messages, setCurrentUserId } = useWebSocket();
+
+  useEffect(() => {
+    if (user?.id) {
+      setCurrentUserId(user.id);
+    }
+  }, [user, setCurrentUserId]);
 
   useEffect(() => {
     fetchAllUsers();
+  }, []);
+
+  // Restore selected conversation from URL on page load/refresh
+  useEffect(() => {
+    const userId = searchParams.get('userId');
+    const username = searchParams.get('username');
+    const email = searchParams.get('email');
+
+    if (userId && username && email) {
+      setSelectedUser({
+        user_id: parseInt(userId),
+        user_username: username,
+        user_email: email,
+      });
+      setShowChatOnMobile(true);
+    }
   }, []);
 
   // Refresh conversation list when new messages arrive
@@ -44,11 +70,22 @@ const ChatPage = () => {
     setSelectedUser(user);
     setShowChatOnMobile(true);
     setShowUsersList(false);
+
+    // Save to URL for persistence across refresh
+    setSearchParams({
+      userId: user.user_id.toString(),
+      username: user.user_username,
+      email: user.user_email,
+    });
   };
 
   const handleBackToList = () => {
     setShowChatOnMobile(false);
-    setSelectedUser(null);
+    // Don't clear selectedUser to maintain selection
+    // Just clear URL params on mobile
+    if (window.innerWidth < 1024) {
+      setSearchParams({});
+    }
   };
 
   const handleMessageSent = () => {

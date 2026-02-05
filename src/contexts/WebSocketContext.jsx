@@ -10,6 +10,7 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState({});
   const [notifications, setNotifications] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
   const wsRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
@@ -36,14 +37,24 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
         
         if (data.type === 'chat_message') {
           const message = data.message;
-          const senderId = message.sender_id;
-          const recipientId = message.recipient_id;
           
-          // Determine the other user in the conversation
-          const otherUserId = senderId;
+          // For the sender, use recipient_id as the key
+          // For the recipient, use sender_id as the key
+          // This ensures messages show up in the correct conversation
           
           setMessages((prev) => {
-            const existingMessages = prev[otherUserId] || [];
+            // Determine which user this conversation is with
+            let conversationUserId;
+            
+            // If we sent this message, the conversation is with the recipient
+            if (message.sender_id === currentUserId) {
+              conversationUserId = message.recipient_id;
+            } else {
+              // If we received this message, the conversation is with the sender
+              conversationUserId = message.sender_id;
+            }
+            
+            const existingMessages = prev[conversationUserId] || [];
             
             // Check if message already exists (prevent duplicates)
             const messageExists = existingMessages.some(m => m.id === message.id);
@@ -54,7 +65,7 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
             
             return {
               ...prev,
-              [otherUserId]: [...existingMessages, message],
+              [conversationUserId]: [...existingMessages, message],
             };
           });
         } else if (data.type === 'notification') {
@@ -100,7 +111,7 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error);
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, currentUserId]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -145,7 +156,7 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && currentUserId) {
       connect();
     } else {
       disconnect();
@@ -154,7 +165,7 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
     return () => {
       disconnect();
     };
-  }, [isAuthenticated, connect, disconnect]);
+  }, [isAuthenticated, currentUserId]);
 
   const value = {
     isConnected,
@@ -165,6 +176,7 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
     sendMessage,
     openChat,
     closeChat,
+    setCurrentUserId,
   };
 
   return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>;

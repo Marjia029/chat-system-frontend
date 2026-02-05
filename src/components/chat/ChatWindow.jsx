@@ -26,6 +26,9 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent }) => {
   useEffect(() => {
     if (!selectedUser) return;
 
+    // Reset local messages when changing conversation
+    setLocalMessages([]);
+
     // Fetch message history
     const fetchMessages = async () => {
       setLoading(true);
@@ -53,11 +56,14 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent }) => {
         closeChat(selectedUser.user_id);
       }
     };
-  }, [selectedUser, isConnected, openChat, closeChat]);
+  }, [selectedUser?.user_id, isConnected, openChat, closeChat]);
 
   // Update local messages when new messages arrive via WebSocket
   useEffect(() => {
-    if (selectedUser && messages[selectedUser.user_id]) {
+    if (!selectedUser) return;
+
+    // Check if we have messages for this conversation
+    if (messages[selectedUser.user_id]) {
       const newMessages = messages[selectedUser.user_id];
       
       setLocalMessages((prev) => {
@@ -74,7 +80,7 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent }) => {
         return prev;
       });
     }
-  }, [messages, selectedUser]);
+  }, [messages, selectedUser?.user_id]);
 
   const handleSendMessage = async (content) => {
     if (!isConnected) {
@@ -82,7 +88,7 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent }) => {
       return;
     }
 
-    // Send via WebSocket (don't add optimistically, wait for server confirmation)
+    // Send via WebSocket
     sendMessage(selectedUser.user_id, content);
     
     // Notify parent component that a message was sent
@@ -176,7 +182,7 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent }) => {
               <MessageBubble
                 key={message.id}
                 message={message}
-                isOwn={message.sender_id === user.id}
+                isOwn={String(message.sender_id) === String(user?.id)}
               />
             ))}
             <div ref={messagesEndRef} />
