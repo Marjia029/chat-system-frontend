@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { authAPI } from '../api/auth';
 import { useWebSocket } from '../hooks/useWebSocket';
@@ -17,6 +17,8 @@ const ChatPage = () => {
   const [showUsersList, setShowUsersList] = useState(false);
   const [showChatOnMobile, setShowChatOnMobile] = useState(false);
   const [conversationRefreshTrigger, setConversationRefreshTrigger] = useState(0);
+  const lastRefreshTime = useRef(0);
+  const refreshDebounceTimer = useRef(null);
   
   const { messages, setCurrentUserId } = useWebSocket();
 
@@ -46,14 +48,33 @@ const ChatPage = () => {
     }
   }, []);
 
-  // Refresh conversation list when new messages arrive
+  // Refresh conversation list when new messages arrive (debounced)
   useEffect(() => {
-    // Debounce the refresh to avoid too many API calls
-    const timer = setTimeout(() => {
-      setConversationRefreshTrigger(prev => prev + 1);
-    }, 500);
+    // Clear existing timer
+    if (refreshDebounceTimer.current) {
+      clearTimeout(refreshDebounceTimer.current);
+    }
 
-    return () => clearTimeout(timer);
+    // Only refresh if enough time has passed (prevent infinite loops)
+    const now = Date.now();
+    const timeSinceLastRefresh = now - lastRefreshTime.current;
+    
+    // Don't refresh more than once every 2 seconds
+    if (timeSinceLastRefresh < 2000) {
+      return;
+    }
+
+    // Debounce the refresh
+    refreshDebounceTimer.current = setTimeout(() => {
+      lastRefreshTime.current = Date.now();
+      setConversationRefreshTrigger(prev => prev + 1);
+    }, 1000);
+
+    return () => {
+      if (refreshDebounceTimer.current) {
+        clearTimeout(refreshDebounceTimer.current);
+      }
+    };
   }, [messages]);
 
   const fetchAllUsers = async () => {
@@ -90,7 +111,23 @@ const ChatPage = () => {
 
   const handleMessageSent = () => {
     // Refresh conversation list when a message is sent
-    setConversationRefreshTrigger(prev => prev + 1);
+    const now = Date.now();
+    if (now - lastRefreshTime.current >= 1000) {
+      lastRefreshTime.current = now;
+      setConversationRefreshTrigger(prev => prev + 1);
+    }
+  };
+
+  const handleChatOpened = () => {
+    // Refresh conversation list when a chat is opened (messages marked as read)
+    // Use a delay to ensure backend has processed the read status
+    setTimeout(() => {
+      const now = Date.now();
+      if (now - lastRefreshTime.current >= 1000) {
+        lastRefreshTime.current = now;
+        setConversationRefreshTrigger(prev => prev + 1);
+      }
+    }, 500);
   };
 
   return (
@@ -183,6 +220,7 @@ const ChatPage = () => {
             selectedUser={selectedUser} 
             onBack={handleBackToList}
             onMessageSent={handleMessageSent}
+            onChatOpened={handleChatOpened}
           />
         </div>
       </div>

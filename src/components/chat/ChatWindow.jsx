@@ -7,7 +7,7 @@ import MessageInput from './MessageInput';
 import { ArrowLeft, MoreVertical, Phone, Video } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const ChatWindow = ({ selectedUser, onBack, onMessageSent }) => {
+const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
   const { user } = useAuth();
   const { messages, setMessages, sendMessage, isConnected, openChat, closeChat } = useWebSocket();
   const [localMessages, setLocalMessages] = useState([]);
@@ -35,6 +35,12 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent }) => {
       try {
         const response = await chatAPI.getMessageHistory(selectedUser.user_id);
         setLocalMessages(response.data);
+        
+        // Notify parent that chat was opened (messages marked as read)
+        // Only notify once when chat is first opened
+        if (onChatOpened) {
+          onChatOpened();
+        }
       } catch (error) {
         console.error('Failed to fetch messages:', error);
         toast.error('Failed to load messages');
