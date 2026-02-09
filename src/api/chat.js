@@ -1,7 +1,7 @@
 import axiosInstance from './axios';
 
 export const chatAPI = {
-  sendMessage: (data) => axiosInstance.post('/chat/send/', data),
+  // sendMessage is removed because you now send everything via WebSocket
   
   getConversations: () => axiosInstance.get('/chat/conversations/'),
   

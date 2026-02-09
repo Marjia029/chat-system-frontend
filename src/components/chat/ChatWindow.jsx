@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { chatAPI } from '../../api/chat';
 import MessageBubble from './MessageBubble';
+import MediaMessageBubble from './MediaMessageBubble';
 import MessageInput from './MessageInput';
 import { ArrowLeft, MoreVertical, Phone, Video } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -12,6 +13,7 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
   const { messages, setMessages, sendMessage, isConnected, openChat, closeChat } = useWebSocket();
   const [localMessages, setLocalMessages] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
 
@@ -26,18 +28,14 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
   useEffect(() => {
     if (!selectedUser) return;
 
-    // Reset local messages when changing conversation
     setLocalMessages([]);
 
-    // Fetch message history
     const fetchMessages = async () => {
       setLoading(true);
       try {
         const response = await chatAPI.getMessageHistory(selectedUser.user_id);
         setLocalMessages(response.data);
         
-        // Notify parent that chat was opened (messages marked as read)
-        // Only notify once when chat is first opened
         if (onChatOpened) {
           onChatOpened();
         }
@@ -51,12 +49,10 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
 
     fetchMessages();
 
-    // Notify backend that this chat is open
     if (isConnected) {
       openChat(selectedUser.user_id);
     }
 
-    // Cleanup: notify backend that chat is closed
     return () => {
       if (isConnected) {
         closeChat(selectedUser.user_id);
@@ -64,19 +60,14 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
     };
   }, [selectedUser?.user_id, isConnected, openChat, closeChat]);
 
-  // Update local messages when new messages arrive via WebSocket
   useEffect(() => {
     if (!selectedUser) return;
 
-    // Check if we have messages for this conversation
     if (messages[selectedUser.user_id]) {
       const newMessages = messages[selectedUser.user_id];
       
       setLocalMessages((prev) => {
-        // Create a Set of existing message IDs for efficient lookup
         const existingIds = new Set(prev.map(msg => msg.id));
-        
-        // Filter out messages that already exist
         const uniqueNewMessages = newMessages.filter(msg => !existingIds.has(msg.id));
         
         if (uniqueNewMessages.length > 0) {
@@ -88,18 +79,67 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
     }
   }, [messages, selectedUser?.user_id]);
 
-  const handleSendMessage = async (content) => {
-    if (!isConnected) {
-      toast.error('Not connected to chat server');
+  const determineMessageType = (file) => {
+    if (!file) return 'text';
+    
+    if (file.type.startsWith('image/')) return 'image';
+    if (file.type.startsWith('video/')) return 'video';
+    if (file.type.startsWith('audio/')) return 'audio';
+    return 'file';
+  };
+
+  const handleSendMessage = async (content, file) => {
+    if ((!content.trim() && !file) || !isConnected) {
+      if (!isConnected) toast.error('Not connected to chat server');
       return;
     }
 
-    // Send via WebSocket
-    sendMessage(selectedUser.user_id, content);
-    
-    // Notify parent component that a message was sent
-    if (onMessageSent) {
-      onMessageSent();
+    setSending(true);
+
+    try {
+      if (file) {
+        // 1. Read file as Base64 string
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        
+        reader.onload = () => {
+          const base64Data = reader.result; // This string contains "data:image/png;base64,..."
+          
+          // 2. Send directly via WebSocket
+          // The keys must match what consumers.py expects (file_data, file_name, etc.)
+          const messagePayload = {
+            type: 'chat_message',
+            recipient_id: selectedUser.user_id,
+            content: content,
+            message_type: determineMessageType(file),
+            file_data: base64Data, 
+            file_name: file.name,
+            file_type: file.type
+          };
+
+          // Use your WebSocket hook's send function
+          // Ensure your useWebSocket hook allows sending a raw object
+          sendMessage(messagePayload); // You might need to adjust this depending on your hook implementation
+          
+          if (onMessageSent) onMessageSent();
+          setSending(false);
+        };
+
+        reader.onerror = (error) => {
+          console.error('Error reading file:', error);
+          toast.error('Failed to process file');
+          setSending(false);
+        };
+      } else {
+        // Standard text message
+        sendMessage(selectedUser.user_id, content);
+        if (onMessageSent) onMessageSent();
+        setSending(false);
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      toast.error('Failed to send message');
+      setSending(false);
     }
   };
 
@@ -185,11 +225,19 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
         ) : (
           <>
             {localMessages.map((message) => (
-              <MessageBubble
-                key={message.id}
-                message={message}
-                isOwn={String(message.sender_id) === String(user?.id)}
-              />
+              message.message_type === 'text' ? (
+                <MessageBubble
+                  key={message.id}
+                  message={message}
+                  isOwn={String(message.sender_id) === String(user?.id)}
+                />
+              ) : (
+                <MediaMessageBubble
+                  key={message.id}
+                  message={message}
+                  isOwn={String(message.sender_id) === String(user?.id)}
+                />
+              )
             ))}
             <div ref={messagesEndRef} />
           </>
@@ -197,13 +245,22 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
       </div>
 
       {/* Message Input */}
-      <MessageInput onSendMessage={handleSendMessage} disabled={!isConnected} />
+      <MessageInput onSendMessage={handleSendMessage} disabled={!isConnected || sending} />
 
       {/* Connection Status */}
       {!isConnected && (
         <div className="bg-yellow-50 border-t border-yellow-200 px-4 py-2 text-center">
           <p className="text-sm text-yellow-800">
             Reconnecting to chat server...
+          </p>
+        </div>
+      )}
+
+      {/* Sending Status */}
+      {sending && (
+        <div className="bg-blue-50 border-t border-blue-200 px-4 py-2 text-center">
+          <p className="text-sm text-blue-800">
+            Sending file...
           </p>
         </div>
       )}

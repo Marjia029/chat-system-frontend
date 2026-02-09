@@ -127,13 +127,19 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
     reconnectAttemptsRef.current = 0;
   }, []);
 
-  const sendMessage = useCallback((recipientId, content) => {
+  const sendMessage = useCallback((arg1, arg2) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'chat_message',
-        recipient_id: recipientId,
-        content: content,
-      }));
+      // NEW LOGIC: Check if arg1 is a full message object (used for file uploads)
+      if (typeof arg1 === 'object' && arg1 !== null && arg1.type) {
+        wsRef.current.send(JSON.stringify(arg1));
+      } else {
+        // OLD LOGIC: Standard text message (recipientId, content)
+        wsRef.current.send(JSON.stringify({
+          type: 'chat_message',
+          recipient_id: arg1,
+          content: arg2,
+        }));
+      }
     }
   }, []);
 

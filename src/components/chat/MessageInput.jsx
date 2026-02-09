@@ -1,15 +1,19 @@
-import React, { useState } from 'react';
-import { Send, Smile } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { Send, Paperclip, Image, X } from 'lucide-react';
+import FilePreview from './FilePreview';
+import toast from 'react-hot-toast';
 
 const MessageInput = ({ onSendMessage, disabled }) => {
   const [message, setMessage] = useState('');
-  const [isFocused, setIsFocused] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const fileInputRef = useRef(null);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (message.trim() && !disabled) {
-      onSendMessage(message);
+    if ((message.trim() || selectedFile) && !disabled) {
+      onSendMessage(message, selectedFile);
       setMessage('');
+      setSelectedFile(null);
     }
   };
 
@@ -20,20 +24,47 @@ const MessageInput = ({ onSendMessage, disabled }) => {
     }
   };
 
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Check file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error('File size must be less than 10MB');
+        return;
+      }
+      setSelectedFile(file);
+    }
+  };
+
+  const removeFile = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   return (
-    <form 
-      onSubmit={handleSubmit} 
-      className="border-t border-gray-200 p-4 bg-white transition-all duration-300 hover:bg-gray-50"
-    >
-      <div className={`flex items-end gap-3 p-2 rounded-lg border-2 transition-all duration-300 ${
-        isFocused ? 'border-primary-500 bg-primary-50 shadow-md' : 'border-gray-200 bg-white'
-      }`}>
+    <form onSubmit={handleSubmit} className="border-t border-gray-200 p-4 bg-white">
+      {selectedFile && (
+        <FilePreview file={selectedFile} onRemove={removeFile} />
+      )}
+      
+      <div className="flex items-end gap-2">
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileSelect}
+          className="hidden"
+          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
+        />
+        
         <button
           type="button"
-          className="p-2 text-gray-400 hover:text-primary-600 rounded-lg hover:bg-primary-100 transition-all duration-200 active:scale-95"
-          title="Add emoji"
+          onClick={() => fileInputRef.current?.click()}
+          className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
+          disabled={disabled}
         >
-          <Smile className="w-6 h-6" />
+          <Paperclip className="w-6 h-6" />
         </button>
         
         <div className="flex-1">
@@ -41,10 +72,8 @@ const MessageInput = ({ onSendMessage, disabled }) => {
             value={message}
             onChange={(e) => setMessage(e.target.value)}
             onKeyPress={handleKeyPress}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            placeholder="Type a message..."
-            className="w-full resize-none bg-transparent px-2 py-2 focus:outline-none placeholder:text-gray-400 text-gray-900 font-medium"
+            placeholder={selectedFile ? "Add a caption (optional)..." : "Type a message..."}
+            className="w-full resize-none rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent max-h-32"
             rows={1}
             disabled={disabled}
             style={{
@@ -60,11 +89,10 @@ const MessageInput = ({ onSendMessage, disabled }) => {
 
         <button
           type="submit"
-          disabled={!message.trim() || disabled}
-          className="p-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 hover:shadow-lg hover:shadow-primary-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-primary-600 disabled:hover:shadow-none active:scale-95 transition-all duration-200 group"
-          title="Send message"
+          disabled={(!message.trim() && !selectedFile) || disabled}
+          className="p-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
-          <Send className="w-5 h-5 group-hover:translate-x-0.5 transition-transform duration-200" />
+          <Send className="w-6 h-6" />
         </button>
       </div>
     </form>
