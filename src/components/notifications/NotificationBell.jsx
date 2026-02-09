@@ -8,28 +8,25 @@ import toast from 'react-hot-toast';
 const NotificationBell = () => {
   const { notifications, setNotifications } = useWebSocket();
   const [showDropdown, setShowDropdown] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [unseenCount, setUnseenCount] = useState(0); // Renamed from unreadCount
   const dropdownRef = useRef(null);
 
   useEffect(() => {
-    // Fetch initial notifications
     fetchNotifications();
   }, []);
 
   useEffect(() => {
-    // Count unread notifications
-    const count = notifications.filter((n) => !n.is_read).length;
-    setUnreadCount(count);
+    // FIX: Count based on 'is_seen', not 'is_read'
+    const count = notifications.filter((n) => !n.is_seen).length;
+    setUnseenCount(count);
   }, [notifications]);
 
   useEffect(() => {
-    // Close dropdown when clicking outside
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setShowDropdown(false);
       }
     };
-
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
@@ -40,6 +37,24 @@ const NotificationBell = () => {
       setNotifications(response.data.notifications);
     } catch (error) {
       console.error('Failed to fetch notifications:', error);
+    }
+  };
+
+  const handleBellClick = async () => {
+    const isOpening = !showDropdown;
+    setShowDropdown(isOpening);
+
+    // FIX: If opening, mark as SEEN (removes red dot, keeps blue background)
+    if (isOpening && unseenCount > 0) {
+      try {
+        await notificationAPI.markAllAsSeen();
+        // Update local state: set is_seen=true for all, but leave is_read alone
+        setNotifications((prev) => 
+          prev.map((n) => ({ ...n, is_seen: true }))
+        );
+      } catch (error) {
+        console.error('Failed to mark notifications as seen');
+      }
     }
   };
 
@@ -54,26 +69,16 @@ const NotificationBell = () => {
     }
   };
 
-  const handleMarkAllAsRead = async () => {
-    try {
-      await notificationAPI.markAllAsRead();
-      setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-      toast.success('All notifications marked as read');
-    } catch (error) {
-      toast.error('Failed to mark all as read');
-    }
-  };
-
   return (
     <div className="relative" ref={dropdownRef}>
       <button
-        onClick={() => setShowDropdown(!showDropdown)}
+        onClick={handleBellClick}
         className="relative p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
       >
         <Bell className="w-6 h-6" />
-        {unreadCount > 0 && (
+        {unseenCount > 0 && (
           <span className="absolute top-0 right-0 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
-            {unreadCount > 9 ? '9+' : unreadCount}
+            {unseenCount > 9 ? '9+' : unseenCount}
           </span>
         )}
       </button>
@@ -82,14 +87,7 @@ const NotificationBell = () => {
         <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
           <div className="p-4 border-b border-gray-200 flex items-center justify-between">
             <h3 className="font-semibold text-gray-900">Notifications</h3>
-            {unreadCount > 0 && (
-              <button
-                onClick={handleMarkAllAsRead}
-                className="text-xs text-primary-600 hover:text-primary-700"
-              >
-                Mark all as read
-              </button>
-            )}
+            {/* Optional: Add a button to manually mark all as READ (turn grey) */}
           </div>
 
           <div className="max-h-96 overflow-y-auto custom-scrollbar">
@@ -116,6 +114,7 @@ const NotificationBell = () => {
                         {formatRelativeTime(notification.created_at)}
                       </p>
                     </div>
+                    {/* Blue dot stays until clicked (is_read) */}
                     {!notification.is_read && (
                       <div className="w-2 h-2 bg-primary-600 rounded-full mt-1"></div>
                     )}

@@ -7,4 +7,6 @@ export const notificationAPI = {
     axiosInstance.post(`/notifications/${notificationId}/read/`),
   
   markAllAsRead: () => axiosInstance.post('/notifications/mark-all-read/'),
+
+  markAllAsSeen: () => axiosInstance.post('/notifications/mark-all-seen/'),
 };
