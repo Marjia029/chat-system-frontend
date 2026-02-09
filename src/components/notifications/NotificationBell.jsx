@@ -8,7 +8,8 @@ import toast from 'react-hot-toast';
 const NotificationBell = () => {
   const { notifications, setNotifications } = useWebSocket();
   const [showDropdown, setShowDropdown] = useState(false);
-  const [unseenCount, setUnseenCount] = useState(0); // Renamed from unreadCount
+  const [unseenCount, setUnseenCount] = useState(0); 
+  const [hasUnread, setHasUnread] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
@@ -19,6 +20,13 @@ const NotificationBell = () => {
     // FIX: Count based on 'is_seen', not 'is_read'
     const count = notifications.filter((n) => !n.is_seen).length;
     setUnseenCount(count);
+  }, [notifications]);
+
+  useEffect(() => {
+    // Check if there are ANY unread messages (is_read: false)
+    // This controls showing the "Mark all as read" button
+    const unreadExists = notifications.some(n => !n.is_read);
+    setHasUnread(unreadExists);
   }, [notifications]);
 
   useEffect(() => {
@@ -58,14 +66,15 @@ const NotificationBell = () => {
     }
   };
 
-  const handleMarkAsRead = async (notificationId) => {
+  const handleMarkAllAsRead = async () => {
     try {
-      await notificationAPI.markAsRead(notificationId);
-      setNotifications((prev) =>
-        prev.map((n) => (n.id === notificationId ? { ...n, is_read: true } : n))
+      await notificationAPI.markAllAsRead(); // Calls MarkAllNotificationsReadView
+      setNotifications((prev) => 
+        prev.map((n) => ({ ...n, is_read: true }))
       );
+      toast.success('All notifications marked as read');
     } catch (error) {
-      toast.error('Failed to mark notification as read');
+      toast.error('Failed to mark all as read');
     }
   };
 
@@ -88,6 +97,14 @@ const NotificationBell = () => {
           <div className="p-4 border-b border-gray-200 flex items-center justify-between">
             <h3 className="font-semibold text-gray-900">Notifications</h3>
             {/* Optional: Add a button to manually mark all as READ (turn grey) */}
+            {hasUnread && (
+              <button
+                onClick={handleMarkAllAsRead}
+                className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+              >
+                Mark all as read
+              </button>
+            )}
           </div>
 
           <div className="max-h-96 overflow-y-auto custom-scrollbar">
