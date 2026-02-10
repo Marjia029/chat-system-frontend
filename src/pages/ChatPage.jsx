@@ -172,12 +172,12 @@ const ChatPage = () => {
 
   return (
     <Layout>
-      <div className="h-[calc(100vh-4rem)] flex">
+      <div className="h-[calc(100vh-4rem)] flex overflow-hidden bg-white rounded-lg shadow">
         {/* Sidebar - Conversations */}
         <div
           className={`${
             showChatOnMobile ? 'hidden' : 'flex'
-          } lg:flex flex-col w-full lg:w-80 xl:w-96 border-r border-gray-200 bg-white overflow-hidden`}
+          } lg:flex flex-col w-full lg:w-80 xl:w-96 border-r border-gray-200 bg-white`}
         >
           {/* Header */}
           <div className="flex-shrink-0 p-4 border-b border-gray-200 flex items-center justify-between bg-white">
@@ -273,7 +273,7 @@ const ChatPage = () => {
         <div
           className={`${
             showChatOnMobile ? 'flex' : 'hidden'
-          } lg:flex flex-1 flex-col`}
+          } lg:flex flex-1`}
         >
           <ChatWindow 
             selectedUser={selectedUser} 
