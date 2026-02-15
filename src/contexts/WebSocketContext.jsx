@@ -28,17 +28,14 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
 
       if (!storedSecretKey) return message;
 
-      // Logic: If THEY sent it, we use THEIR public key (sender_public_key) + OUR secret key.
-      // If WE sent it (echo), we handle that inside onmessage usually, but if we need to decrypt
-      // an echo, we would need the recipient's public key (which might not be in the message payload).
       if (message.sender_id !== currentUser.id && message.sender_public_key) {
-        const decrypted = cryptoUtils.decrypt(
-          message.content,
-          message.sender_public_key,
-          storedSecretKey
-        );
+          const decrypted = cryptoUtils.decrypt(
+            message.content,
+            message.sender_public_key,
+            storedSecretKey
+          );
 
-        if (decrypted) {
+          if (decrypted) {
           return {
             ...message,
             content: decrypted,
@@ -85,30 +82,22 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
             const conversationUserId = isOwnMessage ? message.recipient_id : message.sender_id;
             const existingMessages = prev[conversationUserId] || [];
 
-            // 2. ECHO HANDLING (CRITICAL FIX)
-            // If this is an echo of our own message, it will arrive Encrypted.
-            // We likely already have the Plaintext version in our state (optimistic update).
-            // We must MATCH them and KEEP the Plaintext content.
-
             if (isOwnMessage) {
-              // Find the optimistic message (it has a large timestamp ID or matches content)
-              // We primarily check if we have an unencrypted message that looks like this one
               const optimisticMatch = existingMessages.find(m =>
                 m.sender_id === currentUser.id &&
-                !m.is_encrypted && // Local is plaintext
-                (m.id > 1000000000000 || m.content === message.content) // Temp ID or content match
+                !m.is_encrypted && 
+                (m.id > 1000000000000 || m.content === message.content) 
               );
 
               if (optimisticMatch) {
-                // Update the ID/Timestamp from server, but KEEP local Plaintext Content
                 return {
                   ...prev,
                   [conversationUserId]: existingMessages.map(m => {
                     if (m.id === optimisticMatch.id) {
                       return {
-                        ...message, // Take real ID and server data
-                        content: m.content, // <--- PRESERVE PLAINTEXT
-                        is_encrypted: false // Keep marked as decrypted
+                        ...message, 
+                        content: m.content, 
+                        is_encrypted: false 
                       };
                     }
                     return m;
@@ -172,6 +161,7 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
     // 1. Prepare Encryption
     let finalContent = content;
     let isEncrypted = false;
+
     const canEncrypt = !!(recipientPublicKey && storedSecretKey);
 
     if (canEncrypt && content) {

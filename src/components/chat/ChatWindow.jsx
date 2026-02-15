@@ -43,12 +43,7 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
           if (!msg.is_encrypted || !msg.content || !storedSecretKey) return msg;
 
           try {
-            // Logic:
-            // If WE sent it (sender_id == user.id), we used recipient's public key to encrypt.
-            //    Shared Secret = MyPriv * TheirPub.
-            // If THEY sent it, they used our public key.
-            //    Shared Secret = TheirPub * MyPriv.
-            // Result: The shared secret is the SAME. We just need 'Their' public key.
+            
 
             const theirPublicKey = selectedUser.public_key;
 
@@ -80,15 +75,25 @@ const ChatWindow = ({ selectedUser, onBack, onMessageSent, onChatOpened }) => {
   }, [selectedUser?.user_id, isConnected]);
 
   // 2. Sync with WebSocket Messages (Live Updates)
+ // 2. Sync with WebSocket Messages (Live Updates)
   useEffect(() => {
     if (!selectedUser || !messages[selectedUser.user_id]) return;
 
     const liveMessages = messages[selectedUser.user_id];
 
     setDisplayedMessages(prev => {
-      // Merge live messages into history
-      // We use a Map to prevent duplicates based on ID
-      const msgMap = new Map(prev.map(m => [m.id, m]));
+      const liveIds = new Set(liveMessages.map(m => m.id));
+
+      const filteredPrev = prev.filter(m => {
+        const isTemp = m.id > 1000000000000; // Check for temp timestamp ID
+        if (isTemp) {
+          return liveIds.has(m.id);
+        }
+        return true; // Keep history messages
+      });
+
+      // Merge filtered previous messages with new live messages
+      const msgMap = new Map(filteredPrev.map(m => [m.id, m]));
 
       liveMessages.forEach(m => {
         msgMap.set(m.id, m);
