@@ -1,14 +1,17 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { chatAPI } from '../../api/chat';
 import { formatRelativeTime } from '../../utils/formatters';
+import { cryptoUtils } from '../../utils/crypto';
+import { useAuth } from '../../hooks/useAuth';
 import { Search, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 const ConversationList = ({ onSelectUser, selectedUserId, refreshTrigger }) => {
+  const { user } = useAuth();
   const [conversations, setConversations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Pagination State
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -21,13 +24,13 @@ const ConversationList = ({ onSelectUser, selectedUserId, refreshTrigger }) => {
   const lastConversationRef = useCallback(node => {
     if (loading) return;
     if (observer.current) observer.current.disconnect();
-    
+
     observer.current = new IntersectionObserver(entries => {
       if (entries[0].isIntersecting && hasMore) {
         setPage(prevPage => prevPage + 1);
       }
     });
-    
+
     if (node) observer.current.observe(node);
   }, [loading, hasMore]);
 
@@ -37,7 +40,7 @@ const ConversationList = ({ onSelectUser, selectedUserId, refreshTrigger }) => {
     // The fetch will happen in the next useEffect because page changed to 1
     // But if page was ALREADY 1, we need to force a fetch:
     if (page === 1) {
-       fetchConversations(1, searchQuery, true);
+      fetchConversations(1, searchQuery, true);
     }
   }, [refreshTrigger]);
 
@@ -50,17 +53,42 @@ const ConversationList = ({ onSelectUser, selectedUserId, refreshTrigger }) => {
     setLoading(true);
     try {
       const response = await chatAPI.getConversations(pageNum, search);
-      
+
       // Handle DRF Paginated Response
       const newConversations = response.data.results || response.data || [];
       const nextLink = response.data.next;
 
+      // Decrypt last_message preview for text conversations
+      const storedSecretKey = localStorage.getItem(`secretKey_${user?.id}`);
+      const decryptedConversations = newConversations.map(conv => {
+        if (
+          conv.last_message &&
+          conv.public_key &&
+          storedSecretKey &&
+          (!conv.last_message_type || conv.last_message_type === 'text')
+        ) {
+          try {
+            const decrypted = cryptoUtils.decrypt(
+              conv.last_message,
+              conv.public_key,
+              storedSecretKey
+            );
+            if (decrypted) {
+              return { ...conv, last_message: decrypted };
+            }
+          } catch (e) {
+            console.error('Last message decryption error:', e);
+          }
+        }
+        return conv;
+      });
+
       setConversations(prev => {
-        if (isRefresh) return newConversations;
-        
+        if (isRefresh) return decryptedConversations;
+
         // Prevent duplicates
         const existingIds = new Set(prev.map(c => c.user_id));
-        const uniqueNew = newConversations.filter(c => !existingIds.has(c.user_id));
+        const uniqueNew = decryptedConversations.filter(c => !existingIds.has(c.user_id));
         return [...prev, ...uniqueNew];
       });
 
@@ -76,10 +104,10 @@ const ConversationList = ({ onSelectUser, selectedUserId, refreshTrigger }) => {
   const handleSearchChange = (e) => {
     const query = e.target.value;
     setSearchQuery(query);
-    
+
     // Debounce API call
     if (searchTimeout.current) clearTimeout(searchTimeout.current);
-    
+
     searchTimeout.current = setTimeout(() => {
       setPage(1); // Reset to page 1 to trigger new search
       fetchConversations(1, query, true); // Force refresh
@@ -125,9 +153,8 @@ const ConversationList = ({ onSelectUser, selectedUserId, refreshTrigger }) => {
                 ref={isLastElement ? lastConversationRef : null}
                 key={conversation.user_id}
                 onClick={() => onSelectUser(conversation)}
-                className={`flex items-center gap-3 p-4 cursor-pointer transition-colors border-b border-gray-100 hover:bg-gray-50 ${
-                  selectedUserId === conversation.user_id ? 'bg-primary-50' : ''
-                }`}
+                className={`flex items-center gap-3 p-4 cursor-pointer transition-colors border-b border-gray-100 hover:bg-gray-50 ${selectedUserId === conversation.user_id ? 'bg-primary-50' : ''
+                  }`}
               >
                 <div className="relative">
                   <div className="w-12 h-12 bg-gradient-to-br from-primary-400 to-primary-600 rounded-full flex items-center justify-center text-white font-semibold">
@@ -159,7 +186,7 @@ const ConversationList = ({ onSelectUser, selectedUserId, refreshTrigger }) => {
             );
           })
         )}
-        
+
         {/* Loading Spinner at Bottom */}
         {loading && (
           <div className="p-4 flex justify-center">

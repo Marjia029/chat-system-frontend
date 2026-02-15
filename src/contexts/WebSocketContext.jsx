@@ -1,5 +1,6 @@
 import React, { createContext, useEffect, useRef, useState, useCallback } from 'react';
-import { getAccessToken } from '../utils/storage';
+import { getAccessToken, getUser } from '../utils/storage';
+import { cryptoUtils } from '../utils/crypto';
 import toast from 'react-hot-toast';
 
 export const WebSocketContext = createContext();
@@ -15,6 +16,41 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
   const reconnectTimeoutRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
   const maxReconnectAttempts = 5;
+
+  // Helper: Decrypt a message safely
+  const processIncomingMessage = useCallback((message) => {
+    // If not encrypted or no content, return as is
+    if (!message.is_encrypted || !message.content) return message;
+
+    try {
+      const currentUser = getUser();
+      const storedSecretKey = localStorage.getItem(`secretKey_${currentUser.id}`);
+
+      if (!storedSecretKey) return message;
+
+      // Logic: If THEY sent it, we use THEIR public key (sender_public_key) + OUR secret key.
+      // If WE sent it (echo), we handle that inside onmessage usually, but if we need to decrypt
+      // an echo, we would need the recipient's public key (which might not be in the message payload).
+      if (message.sender_id !== currentUser.id && message.sender_public_key) {
+        const decrypted = cryptoUtils.decrypt(
+          message.content,
+          message.sender_public_key,
+          storedSecretKey
+        );
+
+        if (decrypted) {
+          return {
+            ...message,
+            content: decrypted,
+            is_encrypted: false
+          };
+        }
+      }
+    } catch (e) {
+      console.error("Decryption failed:", e);
+    }
+    return message;
+  }, []);
 
   const connect = useCallback(() => {
     if (!isAuthenticated) return;
@@ -34,156 +70,180 @@ export const WebSocketProvider = ({ children, isAuthenticated }) => {
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        
+
         if (data.type === 'chat_message') {
-          const message = data.message;
-          
-          // For the sender, use recipient_id as the key
-          // For the recipient, use sender_id as the key
-          // This ensures messages show up in the correct conversation
-          
+          let message = data.message;
+          const currentUser = getUser();
+          const isOwnMessage = message.sender_id === currentUser.id;
+
+          // 1. Decrypt if it's from someone else
+          if (!isOwnMessage) {
+            message = processIncomingMessage(message);
+          }
+
           setMessages((prev) => {
-            // Determine which user this conversation is with
-            let conversationUserId;
-            
-            // If we sent this message, the conversation is with the recipient
-            if (message.sender_id === currentUserId) {
-              conversationUserId = message.recipient_id;
-            } else {
-              // If we received this message, the conversation is with the sender
-              conversationUserId = message.sender_id;
-            }
-            
+            const conversationUserId = isOwnMessage ? message.recipient_id : message.sender_id;
             const existingMessages = prev[conversationUserId] || [];
-            
-            // Check if message already exists (prevent duplicates)
-            const messageExists = existingMessages.some(m => m.id === message.id);
-            
-            if (messageExists) {
-              return prev;
+
+            // 2. ECHO HANDLING (CRITICAL FIX)
+            // If this is an echo of our own message, it will arrive Encrypted.
+            // We likely already have the Plaintext version in our state (optimistic update).
+            // We must MATCH them and KEEP the Plaintext content.
+
+            if (isOwnMessage) {
+              // Find the optimistic message (it has a large timestamp ID or matches content)
+              // We primarily check if we have an unencrypted message that looks like this one
+              const optimisticMatch = existingMessages.find(m =>
+                m.sender_id === currentUser.id &&
+                !m.is_encrypted && // Local is plaintext
+                (m.id > 1000000000000 || m.content === message.content) // Temp ID or content match
+              );
+
+              if (optimisticMatch) {
+                // Update the ID/Timestamp from server, but KEEP local Plaintext Content
+                return {
+                  ...prev,
+                  [conversationUserId]: existingMessages.map(m => {
+                    if (m.id === optimisticMatch.id) {
+                      return {
+                        ...message, // Take real ID and server data
+                        content: m.content, // <--- PRESERVE PLAINTEXT
+                        is_encrypted: false // Keep marked as decrypted
+                      };
+                    }
+                    return m;
+                  })
+                };
+              }
             }
-            
+
+            // Standard Add (if no duplicate found)
+            const exists = existingMessages.some(m => m.id === message.id);
+            if (exists) return prev;
+
             return {
               ...prev,
               [conversationUserId]: [...existingMessages, message],
             };
           });
-        } else if (data.type === 'notification') {
+        }
+        else if (data.type === 'notification') {
           setNotifications((prev) => {
-            // Check if notification already exists
             const exists = prev.some(n => n.id === data.notification.id);
             if (exists) return prev;
-            
             return [data.notification, ...prev];
           });
-          
-          // Show toast notification
-          toast.success(data.notification.message, {
-            duration: 3000,
-          });
-        } else if (data.type === 'open_chat_ack') {
-          console.log('Chat opened with user:', data.chat_with);
-        } else if (data.type === 'close_chat_ack') {
-          console.log('Chat closed with user:', data.chat_with);
+          toast.success(data.notification.message);
         }
       };
 
-      ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
-      };
+      ws.onerror = (error) => console.error('WebSocket error:', error);
 
       ws.onclose = () => {
         console.log('WebSocket disconnected');
         setIsConnected(false);
-        
-        // Attempt to reconnect
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current += 1;
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
-          
-          console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
-          
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
-          }, delay);
+          reconnectTimeoutRef.current = setTimeout(connect, delay);
         }
       };
     } catch (error) {
-      console.error('Failed to create WebSocket connection:', error);
+      console.error('Connection failed:', error);
     }
-  }, [isAuthenticated, currentUserId]);
+  }, [isAuthenticated, processIncomingMessage]);
 
   const disconnect = useCallback(() => {
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-    
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     if (wsRef.current) {
       wsRef.current.close();
       wsRef.current = null;
     }
-    
     setIsConnected(false);
     reconnectAttemptsRef.current = 0;
   }, []);
 
-  const sendMessage = useCallback((arg1, arg2) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      // NEW LOGIC: Check if arg1 is a full message object (used for file uploads)
-      if (typeof arg1 === 'object' && arg1 !== null && arg1.type) {
-        wsRef.current.send(JSON.stringify(arg1));
-      } else {
-        // OLD LOGIC: Standard text message (recipientId, content)
-        wsRef.current.send(JSON.stringify({
-          type: 'chat_message',
-          recipient_id: arg1,
-          content: arg2,
-        }));
+  const sendMessage = useCallback((recipientId, content, recipientPublicKey, fileData = null) => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    const currentUser = getUser();
+    const storedSecretKey = localStorage.getItem(`secretKey_${currentUser.id}`);
+
+    // 1. Prepare Encryption
+    let finalContent = content;
+    let isEncrypted = false;
+    const canEncrypt = !!(recipientPublicKey && storedSecretKey);
+
+    if (canEncrypt && content) {
+      const encrypted = cryptoUtils.encrypt(content, recipientPublicKey, storedSecretKey);
+      if (encrypted) {
+        finalContent = encrypted;
+        isEncrypted = true;
       }
     }
+
+    // 2. Optimistic Update (Immediate UI Feedback with PLAINTEXT)
+    const tempId = Date.now();
+    const optimisticMessage = {
+      id: tempId,
+      sender_id: currentUser.id,
+      recipient_id: recipientId,
+      content: content, // <--- Store Plaintext locally!
+      message_type: fileData ? fileData.message_type : 'text',
+      timestamp: new Date().toISOString(),
+      is_read: false,
+      is_encrypted: false, // <--- Mark as not encrypted for UI
+      file_url: fileData ? fileData.file_data : null,
+      file_name: fileData?.file_name
+    };
+
+    setMessages((prev) => ({
+      ...prev,
+      [recipientId]: [...(prev[recipientId] || []), optimisticMessage]
+    }));
+
+    // 3. Send Network Payload (ENCRYPTED)
+    const payload = {
+      type: 'chat_message',
+      recipient_id: recipientId,
+      content: finalContent, // <--- Send Encrypted
+      message_type: fileData ? fileData.message_type : 'text',
+      is_encrypted: isEncrypted,
+      ...(fileData && {
+        file_data: fileData.file_data,
+        file_name: fileData.file_name,
+        file_type: fileData.file_type
+      })
+    };
+
+    wsRef.current.send(JSON.stringify(payload));
+
   }, []);
 
   const openChat = useCallback((userId) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'open_chat',
-        chat_with: userId,
-      }));
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'open_chat', chat_with: userId }));
     }
   }, []);
 
   const closeChat = useCallback((userId) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: 'close_chat',
-        chat_with: userId,
-      }));
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'close_chat', chat_with: userId }));
     }
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated && currentUserId) {
-      connect();
-    } else {
-      disconnect();
-    }
+    if (isAuthenticated && currentUserId) connect();
+    else disconnect();
+    return () => disconnect();
+  }, [isAuthenticated, currentUserId, connect, disconnect]);
 
-    return () => {
-      disconnect();
-    };
-  }, [isAuthenticated, currentUserId]);
-
-  const value = {
-    isConnected,
-    messages,
-    setMessages,
-    notifications,
-    setNotifications,
-    sendMessage,
-    openChat,
-    closeChat,
-    setCurrentUserId,
-  };
-
-  return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>;
+  return (
+    <WebSocketContext.Provider value={{
+      isConnected, messages, setMessages, notifications,
+      sendMessage, openChat, closeChat, setCurrentUserId, processIncomingMessage
+    }}>
+      {children}
+    </WebSocketContext.Provider>
+  );
 };

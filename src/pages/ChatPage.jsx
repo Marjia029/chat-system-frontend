@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { authAPI } from '../api/auth';
+import { chatAPI } from '../api/chat';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useAuth } from '../hooks/useAuth';
 import Layout from '../components/layout/Layout';
@@ -17,7 +18,7 @@ const ChatPage = () => {
   const [showUsersList, setShowUsersList] = useState(false);
   const [showChatOnMobile, setShowChatOnMobile] = useState(false);
   const [conversationRefreshTrigger, setConversationRefreshTrigger] = useState(0);
-  
+
   // Infinite Scroll State
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -25,7 +26,7 @@ const ChatPage = () => {
 
   const lastRefreshTime = useRef(0);
   const refreshDebounceTimer = useRef(null);
-  
+
   const { messages, setCurrentUserId } = useWebSocket();
 
   // Observer for infinite scroll
@@ -33,13 +34,13 @@ const ChatPage = () => {
   const lastUserElementRef = useCallback(node => {
     if (isUsersLoading) return;
     if (observer.current) observer.current.disconnect();
-    
+
     observer.current = new IntersectionObserver(entries => {
       if (entries[0].isIntersecting && hasMore) {
         setPage(prevPage => prevPage + 1);
       }
     });
-    
+
     if (node) observer.current.observe(node);
   }, [isUsersLoading, hasMore]);
 
@@ -52,7 +53,7 @@ const ChatPage = () => {
   // Fetch Users with Pagination
   useEffect(() => {
     if (!showUsersList) return;
-    
+
     // Prevent refetching page 1 if we already have data (e.g. toggling the view)
     if (page === 1 && allUsers.length > 0) return;
 
@@ -61,7 +62,7 @@ const ChatPage = () => {
       try {
         // Pass the page number to the API
         const response = await authAPI.getUsers(page);
-        
+
         // Handle DRF Pagination Response
         const newUsers = response.data.results || response.data || [];
         const nextLink = response.data.next;
@@ -69,14 +70,14 @@ const ChatPage = () => {
         setAllUsers(prevUsers => {
           // If page 1, replace. Otherwise, append.
           if (page === 1) return newUsers;
-          
+
           // Filter out duplicates just in case
           const uniqueNewUsers = newUsers.filter(
             newUser => !prevUsers.some(existing => existing.id === newUser.id)
           );
           return [...prevUsers, ...uniqueNewUsers];
         });
-        
+
         // If 'next' is null, we have reached the end
         setHasMore(!!nextLink);
 
@@ -98,11 +99,29 @@ const ChatPage = () => {
     const email = searchParams.get('email');
 
     if (userId && username && email) {
-      setSelectedUser({
-        user_id: parseInt(userId),
-        user_username: username,
-        user_email: email,
-      });
+      // Fetch the user's public_key for encryption
+      const fetchPublicKey = async () => {
+        try {
+          const response = await chatAPI.getConversations(1);
+          const conversations = response.data.results || response.data || [];
+          const conv = conversations.find(c => c.user_id === parseInt(userId));
+
+          setSelectedUser({
+            user_id: parseInt(userId),
+            user_username: username,
+            user_email: email,
+            public_key: conv?.public_key || '',
+          });
+        } catch {
+          setSelectedUser({
+            user_id: parseInt(userId),
+            user_username: username,
+            user_email: email,
+            public_key: '',
+          });
+        }
+      };
+      fetchPublicKey();
       setShowChatOnMobile(true);
     }
   }, []);
@@ -115,7 +134,7 @@ const ChatPage = () => {
 
     const now = Date.now();
     const timeSinceLastRefresh = now - lastRefreshTime.current;
-    
+
     if (timeSinceLastRefresh < 2000) return;
 
     refreshDebounceTimer.current = setTimeout(() => {
@@ -175,9 +194,8 @@ const ChatPage = () => {
       <div className="h-[calc(100vh-4rem)] flex overflow-hidden bg-white rounded-lg shadow">
         {/* Sidebar - Conversations */}
         <div
-          className={`${
-            showChatOnMobile ? 'hidden' : 'flex'
-          } lg:flex flex-col w-full lg:w-80 xl:w-96 border-r border-gray-200 bg-white`}
+          className={`${showChatOnMobile ? 'hidden' : 'flex'
+            } lg:flex flex-col w-full lg:w-80 xl:w-96 border-r border-gray-200 bg-white`}
         >
           {/* Header */}
           <div className="flex-shrink-0 p-4 border-b border-gray-200 flex items-center justify-between bg-white">
@@ -204,7 +222,7 @@ const ChatPage = () => {
                   Select a user to start a conversation
                 </p>
               </div>
-              
+
               <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {allUsers.length === 0 && !isUsersLoading ? (
                   <div className="flex flex-col items-center justify-center h-64 text-center px-4">
@@ -215,7 +233,7 @@ const ChatPage = () => {
                   allUsers.map((user, index) => {
                     // Check if this is the last element to attach the ref
                     const isLastElement = allUsers.length === index + 1;
-                    
+
                     return (
                       <div
                         ref={isLastElement ? lastUserElementRef : null}
@@ -225,6 +243,7 @@ const ChatPage = () => {
                             user_id: user.id,
                             user_email: user.email,
                             user_username: user.username,
+                            public_key: user.public_key || '',
                           })
                         }
                         className="flex items-center gap-3 p-4 cursor-pointer hover:bg-gray-50 transition-colors border-b border-gray-100"
@@ -242,7 +261,7 @@ const ChatPage = () => {
                     );
                   })
                 )}
-                
+
                 {/* Loading Indicator at Bottom */}
                 {isUsersLoading && (
                   <div className="p-4 flex justify-center items-center">
@@ -250,7 +269,7 @@ const ChatPage = () => {
                   </div>
                 )}
               </div>
-              
+
               <div className="p-4 border-t border-gray-200">
                 <button
                   onClick={() => setShowUsersList(false)}
@@ -271,12 +290,11 @@ const ChatPage = () => {
 
         {/* Main Chat Area */}
         <div
-          className={`${
-            showChatOnMobile ? 'flex' : 'hidden'
-          } lg:flex flex-1`}
+          className={`${showChatOnMobile ? 'flex' : 'hidden'
+            } lg:flex flex-1`}
         >
-          <ChatWindow 
-            selectedUser={selectedUser} 
+          <ChatWindow
+            selectedUser={selectedUser}
             onBack={handleBackToList}
             onMessageSent={handleMessageSent}
             onChatOpened={handleChatOpened}
